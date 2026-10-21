@@ -39,6 +39,49 @@ claims to catch. This page shows the results, live, and can ask Colab to run it 
 <br><sub>Fault injection on — every check correctly fails, and the corrupted cell lights up red in the memory map.</sub>
 </div>
 
+## Under the hood: where software touches hardware
+
+This dashboard is the thin, pretty layer on top. The real work is
+[`engine/diag.cu`](engine/diag.cu) — C++ and CUDA that talk to the GPU directly, not through
+a simulation or a mocked sensor.
+
+**NVML crosses into the driver.** `nvmlDeviceGetTemperature` and `nvmlDeviceGetFanSpeed`
+aren't reading a config file — they're asking NVIDIA's management library to go through the
+driver and return what the die's thermal sensor and the board's fan tachometer are reporting
+*right now*:
+
+```cpp
+nvmlReturn_t result = nvmlDeviceGetTemperature(gpu, NVML_TEMPERATURE_GPU, &temp);
+nvmlDeviceGetFanSpeed(gpu, &speed);
+```
+
+**CUDA kernels run on physical cores.** `__global__` marks a function that's compiled to the
+GPU's own instruction set and launched across thousands of its cores at once — this isn't a
+CPU `for` loop, it's silicon:
+
+```cpp
+__global__ void fillMemory(unsigned int* data, int n, unsigned int pattern) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;   // which thread am I?
+    if (i < n) data[i] = pattern;
+}
+```
+
+```cpp
+fillMemory<<<(n + 255) / 256, 256>>>(data, n, pattern);
+```
+
+launches roughly 4,000 blocks of 256 threads — one real core touching one real memory cell,
+a million times over, four bit patterns in a row.
+
+**`cudaMallocManaged` allocates real VRAM.** The memory and compute tests aren't working on
+a CPU array — they're on unified memory that physically lives on the GPU's own memory chips,
+just made addressable from the CPU too.
+
+Flip `injectFault` to `true` and every one of those same hardware paths runs again with a
+deliberately wrong expectation — the limit drops to 10 °C, a fan reading jumps to 150%, one
+value out of a million gets corrupted in VRAM — so you can watch each check go from PASS to
+FAIL for the right reason, on the actual hardware, not a stub.
+
 ## Architecture
 
 <img src="docs/architecture.svg" alt="Architecture diagram: Colab notebook polls and posts results to Vercel serverless functions, which read and write Upstash Redis; the visitor browser polls Vercel for status and results, and can request a run" width="100%">
@@ -67,7 +110,8 @@ opens a port, needs a tunnel, or exposes a public address.
 | [`api/run.js`](api/run.js) | `POST` to trigger the **Run again** button |
 | [`api/poll.js`](api/poll.js) | Colab checks in here every 5 seconds while listening |
 | [`lib/store.js`](lib/store.js) | Redis read/write helpers, and the deploy-key check |
-| [`gpu_diagnostics_cpp.ipynb`](gpu_diagnostics_cpp.ipynb) | The Colab notebook: builds `diag.cu`, runs it, and talks to the website |
+| [`engine/diag.cu`](engine/diag.cu) | **The diagnostic engine** — C++/CUDA, NVML health checks, CUDA memory + compute kernels |
+| [`gpu_diagnostics_cpp.ipynb`](gpu_diagnostics_cpp.ipynb) | The Colab notebook: writes the engine, compiles it, runs it against a real GPU, and talks to the website |
 | [`docs/architecture.svg`](docs/architecture.svg) | The diagram above |
 
 ## Set up (once)
