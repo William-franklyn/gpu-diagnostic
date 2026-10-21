@@ -91,9 +91,12 @@ h1 {
 .dot.idle { background: var(--pass); }
 .dot.busy { background: var(--busy); }
 .dot.off { background: transparent; border: 2px solid var(--muted); }
+.status.fresh { border-color: var(--pass); box-shadow: inset 4px 0 0 var(--pass); }
 @media (prefers-reduced-motion: no-preference) {
   .dot.busy { animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.25; } }
+  .status.flash { animation: flash 1.6s ease-out; }
+  @keyframes flash { from { background: var(--pass-soft); } to { background: var(--panel); } }
 }
 
 .run-btn {
@@ -313,12 +316,22 @@ function secondsAgo(iso) {
 function timeAgo(iso) {
   const s = secondsAgo(iso);
   if (s === Infinity) return "never";
-  if (s < 60) return "just now";
+  if (s < 5) return "just now";
+  if (s < 60) return Math.round(s) + " s ago";
   if (s < 3600) return Math.round(s / 60) + " min ago";
   if (s < 86400) return Math.round(s / 3600) + " h ago";
   return Math.round(s / 86400) + " days ago";
 }
 
+
+// Exact time in the viewer's own time zone, with seconds
+function formatTime(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString([], {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short"
+  });
+}
 
 // ---------- Status panel ----------
 function renderStatus() {
@@ -344,8 +357,11 @@ function renderStatus() {
     head = "Running on the GPU";
     sub = online ? "Both runs take about a minute."
                  : "Colab stopped responding during the run. Start listening in Colab, then click Run again.";
+  } else if (status.lastRunAt) {
+    sub = "Last run" + (status.runCount ? " #" + status.runCount : "") +
+          " at " + formatTime(status.lastRunAt) + " (" + timeAgo(status.lastRunAt) + ").";
   } else {
-    sub = status.lastRunAt ? "Last run " + timeAgo(status.lastRunAt) + "." : "No runs yet.";
+    sub = "No runs yet.";
   }
 
   if (online) {
@@ -379,6 +395,7 @@ function renderStatus() {
   const hadFocus = oldInput && document.activeElement === oldInput;
 
   box.innerHTML = html;
+  box.classList.toggle("fresh", status.state === "idle" && secondsAgo(status.lastRunAt) < 60);
 
   document.getElementById("run-btn").addEventListener("click", startRun);
   const form = document.getElementById("keyform");
@@ -478,7 +495,8 @@ function renderResults() {
       '<div><dt>GPU</dt><dd>' + esc(results.gpu.name) + (gpuCount > 1 ? " × " + gpuCount : "") + '</dd></div>' +
       '<div><dt>Memory</dt><dd>' + esc(results.gpu.memory) + '</dd></div>' +
       '<div><dt>Driver</dt><dd>' + esc(results.gpu.driver) + '</dd></div>' +
-      '<div><dt>Tested</dt><dd>' + esc(results.generated) + '</dd></div>' +
+      (results.runNumber ? '<div><dt>Run</dt><dd>#' + esc(results.runNumber) + '</dd></div>' : '') +
+      '<div><dt>Tested</dt><dd>' + esc(results.receivedAt ? formatTime(results.receivedAt) : results.generated) + '</dd></div>' +
     '</dl>' +
     (results.sample ? '<p class="sample-note">These are sample results, not from a real GPU.</p>' : '');
 
@@ -560,19 +578,27 @@ async function refresh() {
 
   // New results arrived (or first load): fetch and redraw them
   const runAt = status ? status.lastRunAt : null;
+  let isNew = false;
   if (runAt !== shownRunAt) {
     try {
       await loadResults();
+      isNew = shownRunAt !== undefined;   // not on the first page load
       shownRunAt = runAt;
       renderResults();
     } catch (e) {}
   }
   renderStatus();
+  if (isNew) {
+    const box = document.getElementById("status");
+    box.classList.remove("flash");
+    void box.offsetWidth;                 // restart the highlight
+    box.classList.add("flash");
+  }
 
   // Check often while a run is happening, less often otherwise
   clearTimeout(pollTimer);
   const busy = status && status.state !== "idle";
-  pollTimer = setTimeout(refresh, busy ? 4000 : 20000);
+  pollTimer = setTimeout(refresh, busy ? 4000 : 10000);
 }
 
 refresh();
