@@ -82,6 +82,30 @@ deliberately wrong expectation — the limit drops to 10 °C, a fan reading jump
 value out of a million gets corrupted in VRAM — so you can watch each check go from PASS to
 FAIL for the right reason, on the actual hardware, not a stub.
 
+## Roadmap: more NVML checks
+
+The four checks above only use two calls out of the dozens NVIDIA exposes in
+[NVML's Device Queries API](https://docs.nvidia.com/deploy/nvml-api/api/group__nvmlDeviceQueries.html).
+In plain language, here's what's planned next:
+
+| Planned check | NVML call | What it would catch |
+|---|---|---|
+| **Power draw** | `nvmlDeviceGetPowerUsage` | Is the card pulling more power than its own limit (`nvmlDeviceGetPowerManagementLimit`) allows? |
+| **Clock speed** | `nvmlDeviceGetClockInfo` | Is the GPU actually running near its rated clock, or quietly throttled below `nvmlDeviceGetMaxClockInfo`? |
+| **Why it's throttled** | `nvmlDeviceGetCurrentClocksThrottleReasons` | If it *is* slow, why — too hot, power-capped, something else — instead of only reporting the symptom. |
+| **Utilization** | `nvmlDeviceGetUtilizationRates` | Was the GPU actually busy during a test, or did the workload silently run somewhere else? |
+| **VRAM usage** | `nvmlDeviceGetMemoryInfo` | How much memory is used, free, and total right now — catches leaks and cards reporting less VRAM than expected. |
+| **ECC memory errors** | `nvmlDeviceGetTotalEccErrors` | Corrected and uncorrected memory errors the driver already caught — an aging signal the current memory test can't see. |
+| **Remapped memory rows** | `nvmlDeviceGetRemappedRows` | Whether failing VRAM cells have already been swapped out behind the scenes — a sign a card is wearing out. |
+| **PCIe link health** | `nvmlDeviceGetCurrPcieLinkGeneration` + `nvmlDeviceGetCurrPcieLinkWidth` | Whether the card is running at its rated PCIe generation/width, or got silently downgraded by a loose slot, a bad riser, or a BIOS setting. |
+| **Temperature limit, per GPU** | `nvmlDeviceGetTemperatureThreshold` | The card's *own* slowdown/shutdown threshold, instead of hardcoding 85 °C for every GPU model. |
+| **Performance state** | `nvmlDeviceGetPerformanceState` | Whether the GPU is actually in a high-performance state (P0) during a test, instead of idled down. |
+| **Encode/decode load** | `nvmlDeviceGetEncoderUtilization` / `nvmlDeviceGetDecoderUtilization` | Relevant for GPUs doing video encode or transcode work, not just compute. |
+
+Each one would slot into [`engine/diag.cu`](engine/diag.cu) the same way the existing checks
+do: read a value through NVML, compare it against an expected range, and — when `injectFault`
+is on — deliberately feed it a value that should fail.
+
 ## Architecture
 
 <img src="docs/architecture.svg" alt="Architecture diagram: Colab notebook polls and posts results to Vercel serverless functions, which read and write Upstash Redis; the visitor browser polls Vercel for status and results, and can request a run" width="100%">
