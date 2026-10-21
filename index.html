@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Diagnostics</title>
+<meta name="description" content="Results from a C++/CUDA GPU diagnostic tool: health checks, memory pattern test, compute check and fault injection.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #E7E9E4;
+  --panel: #F6F7F3;
+  --ink: #1B2220;
+  --muted: #5B6662;
+  --line: #C9CEC7;
+  --pass: #1F6F5C;
+  --pass-soft: #D3E6DF;
+  --fail: #B8371F;
+  --fail-soft: #F3D9D2;
+  --busy: #A86A00;
+  --cell: #9FB7AE;
+  --cell-off: #D6DAD4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161B1A; --panel: #1F2624; --ink: #E5EAE7; --muted: #9AA6A1; --line: #34403C;
+    --pass: #5CC2A4; --pass-soft: #1E3A32; --fail: #F0765C; --fail-soft: #43231C; --busy: #E2A93B;
+    --cell: #3F7A68; --cell-off: #2A3330;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161B1A; --panel: #1F2624; --ink: #E5EAE7; --muted: #9AA6A1; --line: #34403C;
+  --pass: #5CC2A4; --pass-soft: #1E3A32; --fail: #F0765C; --fail-soft: #43231C; --busy: #E2A93B;
+  --cell: #3F7A68; --cell-off: #2A3330;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Archivo", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+}
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+button { font: inherit; }
+button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible { outline: 3px solid var(--pass); outline-offset: 3px; }
+
+/* Header */
+header { padding: 56px 0 28px; }
+h1 {
+  font-stretch: 62%;
+  font-weight: 800;
+  font-size: clamp(56px, 13vw, 132px);
+  line-height: 0.9;
+  letter-spacing: -0.01em;
+  margin: 0 0 32px;
+}
+.specs { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 0; color: var(--muted); }
+.specs div { display: flex; gap: 8px; }
+.specs dd { margin: 0; color: var(--ink); font-weight: 600; }
+
+.sample-note {
+  margin: 24px 0 0;
+  padding: 12px 16px;
+  border-left: 4px solid var(--fail);
+  background: var(--fail-soft);
+  max-width: 68ch;
+}
+
+/* Live status */
+.status {
+  margin: 32px 0 0;
+  padding: 18px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 24px;
+  align-items: center;
+}
+.status-main { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 19px; }
+.status-sub { grid-column: 1; margin: 0; color: var(--muted); font-size: 15px; }
+.status .run-btn { grid-column: 2; grid-row: 1 / span 2; }
+.dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.idle { background: var(--pass); }
+.dot.busy { background: var(--busy); }
+.dot.off { background: transparent; border: 2px solid var(--muted); }
+@media (prefers-reduced-motion: no-preference) {
+  .dot.busy { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+}
+
+.run-btn {
+  font-weight: 700;
+  border: 2px solid var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 999px;
+  padding: 9px 22px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.run-btn:disabled { opacity: 0.45; cursor: default; }
+
+.keyform { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.keyform label { width: 100%; font-size: 15px; color: var(--muted); }
+.keyform input {
+  font: inherit;
+  padding: 8px 12px;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.keyform .run-btn { padding: 8px 18px; }
+.form-error { width: 100%; margin: 0; color: var(--fail); font-weight: 600; font-size: 15px; }
+
+/* Run switch */
+.switch {
+  display: inline-flex;
+  margin: 28px 0 0;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 3px;
+}
+.switch button {
+  font-weight: 600;
+  font-size: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.switch button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+/* Verdict + memory map */
+.verdict {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 40px;
+  align-items: end;
+  padding: 36px 0 44px;
+  border-bottom: 2px solid var(--ink);
+}
+.verdict h2 {
+  font-stretch: 75%;
+  font-weight: 700;
+  font-size: clamp(36px, 6vw, 60px);
+  line-height: 1;
+  margin: 0 0 14px;
+}
+.verdict h2.good { color: var(--pass); }
+.verdict h2.bad { color: var(--fail); }
+.verdict p { margin: 0; max-width: 46ch; color: var(--muted); }
+
+.memmap figure { margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(64, 1fr); gap: 2px; }
+.grid span { aspect-ratio: 1; background: var(--cell-off); border-radius: 1px; }
+.grid span.on { background: var(--cell); }
+.grid span.bad { background: var(--fail); box-shadow: 0 0 0 2px var(--fail-soft); position: relative; z-index: 1; }
+.memmap figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
+
+.empty { padding: 48px 0 56px; border-bottom: 2px solid var(--ink); }
+.empty h2 { font-stretch: 75%; font-weight: 700; font-size: clamp(32px, 5vw, 48px); line-height: 1.05; margin: 0 0 12px; }
+.empty p { margin: 0; max-width: 56ch; color: var(--muted); }
+
+/* Test rows */
+.gpu-block h3 { font-stretch: 75%; font-weight: 700; font-size: 22px; margin: 28px 0 4px; }
+.test {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) auto;
+  gap: 8px 32px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+  align-items: start;
+}
+.test h4 { margin: 0 0 2px; font-size: 19px; font-weight: 700; }
+.test .what { margin: 0; color: var(--muted); font-size: 15px; max-width: 42ch; }
+.test ul { list-style: none; margin: 0; padding: 0; font-size: 15px; }
+.test li { padding: 1px 0; }
+.test li.err { color: var(--fail); font-weight: 600; }
+.badge { font-weight: 700; font-size: 14px; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+.badge.pass { background: var(--pass-soft); color: var(--pass); }
+.badge.fail { background: var(--fail-soft); color: var(--fail); }
+
+/* How it works */
+section.how { padding: 56px 0 24px; }
+section.how h2 { font-stretch: 75%; font-weight: 700; font-size: 34px; margin: 0 0 20px; }
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); counter-reset: step; }
+.flow li { counter-increment: step; padding: 16px 20px 16px 0; border-top: 2px solid var(--ink); font-size: 15px; color: var(--muted); }
+.flow li::before {
+  content: counter(step);
+  display: block;
+  font-stretch: 62%;
+  font-weight: 800;
+  font-size: 40px;
+  line-height: 1;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.flow strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 2px; }
+
+details { margin: 40px 0 0; border-top: 1px solid var(--line); padding-top: 16px; }
+summary { cursor: pointer; font-weight: 600; }
+pre {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: 4px;
+}
+
+footer { padding: 32px 0 56px; color: var(--muted); font-size: 15px; }
+footer a { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 760px) {
+  header { padding-top: 36px; }
+  .status { grid-template-columns: 1fr; }
+  .status .run-btn { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 10px; }
+  .verdict { grid-template-columns: 1fr; gap: 28px; }
+  .grid { grid-template-columns: repeat(32, 1fr); }
+  .test { grid-template-columns: 1fr auto; }
+  .test .measured { grid-column: 1 / -1; grid-row: 2; }
+  .flow { grid-template-columns: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .grid span { transition: background-color 0.25s; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>GPU diagnostics</h1>
+    <div id="specs"></div>
+    <div class="status" id="status" aria-live="polite">
+      <div class="status-main"><span class="dot"></span><span>Checking status…</span></div>
+    </div>
+    <div id="switch"></div>
+  </header>
+  <main id="results"></main>
+  <section class="how">
+    <h2>How it works</h2>
+    <ol class="flow">
+      <li><strong>C++ engine</strong>One program, written in C++ and CUDA, runs every check.</li>
+      <li><strong>Health checks</strong>NVIDIA's NVML library reports temperature and fan speed.</li>
+      <li><strong>GPU workloads</strong>CUDA kernels run on thousands of GPU threads to test memory and compute.</li>
+      <li><strong>This page</strong>Colab sends the results here. Run again asks Colab to test the GPU once more.</li>
+    </ol>
+    <div id="output"></div>
+  </section>
+  <footer id="footer">Fault injection switches on deliberate errors to prove each check catches them.</footer>
+</div>
+
+<script>
+// ---------- Text for each test ----------
+const TESTS = {
+  temp:    { title: "GPU temperature",     what: "Reads the core temperature through NVML and compares it with an 85 °C limit." },
+  fan:     { title: "Fan speed",           what: "Reads the fan speed and rejects impossible values above 100%." },
+  memory:  { title: "Memory pattern test", what: "Writes four bit patterns into 1 million values of GPU memory, then reads every value back." },
+  compute: { title: "Compute check",       what: "Adds 1 million pairs of numbers on the GPU and checks every answer on the CPU." }
+};
+
+const CELLS = 1024;         // each square stands for about 1,000 tested values
+const FAULT_CELL = 1;       // the fault injection corrupts value number 1000
+const ONLINE_SECONDS = 30;  // Colab counts as listening if it checked in this recently
+
+let results = null;         // latest results from /api/results
+let status = null;          // latest status from /api/status
+let shownRunAt = undefined; // lastRunAt of the results on screen
+let current = "healthy";    // which run is shown: healthy or fault
+let askingForKey = false;
+let keyError = "";
+let pollTimer = null;
+
+
+// ---------- Small helpers ----------
+function esc(text) {
+  const d = document.createElement("div");
+  d.textContent = text == null ? "" : String(text);
+  return d.innerHTML;
+}
+
+function getKey() {
+  try { return localStorage.getItem("deployKey") || ""; } catch (e) { return ""; }
+}
+function setKey(value) {
+  try {
+    if (value) { localStorage.setItem("deployKey", value); }
+    else { localStorage.removeItem("deployKey"); }
+  } catch (e) {}
+  memoryKey = value;
+}
+let memoryKey = getKey();   // also kept here in case storage is blocked
+
+function secondsAgo(iso) {
+  if (!iso || !status) return Infinity;
+  return (new Date(status.now) - new Date(iso)) / 1000;
+}
+
+function timeAgo(iso) {
+  const s = secondsAgo(iso);
+  if (s === Infinity) return "never";
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+
+
+// ---------- Status panel ----------
+function renderStatus() {
+  const box = document.getElementById("status");
+  if (!status) {
+    box.innerHTML = '<div class="status-main"><span class="dot off"></span><span>Can\'t reach the server</span></div>' +
+      '<p class="status-sub">The page will keep trying.</p>';
+    return;
+  }
+
+  const online = secondsAgo(status.lastSeen) < ONLINE_SECONDS;
+  let dot = "idle";
+  let head = "Waiting for a run";
+  let sub = "";
+
+  if (status.state === "requested") {
+    dot = "busy";
+    head = "Run requested";
+    sub = online ? "Colab will pick it up in a few seconds."
+                 : "It will start as soon as Colab starts listening.";
+  } else if (status.state === "running") {
+    dot = "busy";
+    head = "Running on the GPU";
+    sub = online ? "Both runs take about a minute."
+                 : "Colab stopped responding during the run. Start listening in Colab, then click Run again.";
+  } else {
+    sub = status.lastRunAt ? "Last run " + timeAgo(status.lastRunAt) + "." : "No runs yet.";
+  }
+
+  if (online) {
+    sub += " Colab is listening.";
+  } else if (status.lastSeen) {
+    sub += " Colab last checked in " + timeAgo(status.lastSeen) + ".";
+  } else {
+    sub += " Colab hasn't connected yet.";
+  }
+  if (!online && status.state === "idle") dot = "off";
+
+  const busy = status.state !== "idle";
+  let html =
+    '<div class="status-main"><span class="dot ' + dot + '"></span><span>' + esc(head) + '</span></div>' +
+    '<p class="status-sub">' + esc(sub) + '</p>' +
+    '<button type="button" class="run-btn" id="run-btn"' + (busy ? " disabled" : "") + '>Run again</button>';
+
+  if (askingForKey) {
+    html +=
+      '<form class="keyform" id="keyform">' +
+        '<label for="key-input">Enter your deploy key to start a run. It\'s saved in this browser only.</label>' +
+        '<input id="key-input" type="password" autocomplete="current-password" required>' +
+        '<button type="submit" class="run-btn">Save key and run</button>' +
+        (keyError ? '<p class="form-error">' + esc(keyError) + '</p>' : '') +
+      '</form>';
+  }
+
+  // Keep what's typed in the key box when the panel refreshes
+  const oldInput = document.getElementById("key-input");
+  const typed = oldInput ? oldInput.value : "";
+  const hadFocus = oldInput && document.activeElement === oldInput;
+
+  box.innerHTML = html;
+
+  document.getElementById("run-btn").addEventListener("click", startRun);
+  const form = document.getElementById("keyform");
+  if (form) {
+    const input = document.getElementById("key-input");
+    input.value = typed;
+    if (hadFocus || !typed) input.focus();
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      setKey(input.value.trim());
+      startRun();
+    });
+  }
+}
+
+async function startRun() {
+  if (!memoryKey) {
+    askingForKey = true;
+    keyError = "";
+    renderStatus();
+    return;
+  }
+  try {
+    const r = await fetch("/api/run", { method: "POST", headers: { "x-deploy-key": memoryKey } });
+    if (r.status === 401) {
+      setKey("");
+      askingForKey = true;
+      keyError = "That key doesn't match DEPLOY_KEY in your Vercel settings.";
+      renderStatus();
+      return;
+    }
+    if (!r.ok) {
+      const body = await r.json().catch(function () { return {}; });
+      throw new Error(body.error || "HTTP " + r.status);
+    }
+    askingForKey = false;
+    keyError = "";
+    await refresh();
+  } catch (err) {
+    askingForKey = true;
+    keyError = "Couldn't start the run: " + err.message;
+    renderStatus();
+  }
+}
+
+
+// ---------- Results ----------
+function memoryFailed(run) {
+  for (const gpu of run.gpus) {
+    for (const t of gpu.tests) {
+      if (t.name === "memory" && t.result === "FAIL") return true;
+    }
+  }
+  return false;
+}
+
+function verdictText(run, name) {
+  const total = run.passed + run.failed;
+  if (name === "fault") {
+    if (run.failed === total) {
+      return { cls: "good", head: "All " + total + " injected faults caught",
+        body: "In this run, faults were switched on deliberately. Every check failed, which is the right result: it shows each one notices a real problem." };
+    }
+    return { cls: "bad", head: run.passed + " of " + total + " faults missed",
+      body: "Faults were switched on deliberately, but some checks still passed. Those checks need fixing." };
+  }
+  if (run.failed === 0) {
+    return { cls: "good", head: total + " of " + total + " checks passed",
+      body: "A normal run on a real GPU. Temperature, fan, memory and compute all came back healthy." };
+  }
+  return { cls: "bad", head: run.failed + " of " + total + " checks failed",
+    body: "A normal run found a problem. The failing checks are listed below." };
+}
+
+function renderResults() {
+  const specs = document.getElementById("specs");
+  const sw = document.getElementById("switch");
+  const main = document.getElementById("results");
+  const out = document.getElementById("output");
+  const footer = document.getElementById("footer");
+
+  if (!results) {
+    specs.innerHTML = "";
+    sw.innerHTML = "";
+    out.innerHTML = "";
+    main.innerHTML =
+      '<section class="empty"><h2>No results yet</h2>' +
+      '<p>In the Colab notebook, click Deploy to website. Or turn on Listen for runs in Colab, then click Run again on this page.</p></section>';
+    return;
+  }
+
+  const run = results.runs[current];
+  const gpuCount = run.gpus.length;
+
+  specs.innerHTML =
+    '<dl class="specs">' +
+      '<div><dt>GPU</dt><dd>' + esc(results.gpu.name) + (gpuCount > 1 ? " × " + gpuCount : "") + '</dd></div>' +
+      '<div><dt>Memory</dt><dd>' + esc(results.gpu.memory) + '</dd></div>' +
+      '<div><dt>Driver</dt><dd>' + esc(results.gpu.driver) + '</dd></div>' +
+      '<div><dt>Tested</dt><dd>' + esc(results.generated) + '</dd></div>' +
+    '</dl>' +
+    (results.sample ? '<p class="sample-note">These are sample results, not from a real GPU.</p>' : '');
+
+  sw.innerHTML =
+    '<div class="switch" role="group" aria-label="Choose a run">' +
+      '<button type="button" data-run="healthy" aria-pressed="' + (current === "healthy") + '">Normal run</button>' +
+      '<button type="button" data-run="fault" aria-pressed="' + (current === "fault") + '">Fault injection run</button>' +
+    '</div>';
+  for (const b of sw.querySelectorAll("button")) {
+    b.addEventListener("click", function () {
+      current = b.dataset.run;
+      renderResults();
+      sw.querySelector('button[data-run="' + current + '"]').focus();
+    });
+  }
+
+  const v = verdictText(run, current);
+  const bad = memoryFailed(run);
+  let cells = "";
+  for (let i = 0; i < CELLS; i++) {
+    cells += '<span class="' + (bad && i === FAULT_CELL ? "bad" : "on") + '"></span>';
+  }
+  const caption = bad
+    ? "The red square is where the injected fault corrupted a value. The test found it."
+    : "Memory test map. Each square stands for about 1,000 of the 1 million values checked.";
+
+  let rows = "";
+  for (const gpu of run.gpus) {
+    if (gpuCount > 1) rows += '<h3>' + esc(gpu.id) + '</h3>';
+    rows += '<div class="gpu-block">';
+    for (const t of gpu.tests) {
+      const info = TESTS[t.name] || { title: t.name, what: "" };
+      const pass = t.result === "PASS";
+      let lines = "";
+      for (const d of t.details) {
+        const isErr = d.startsWith("ERROR");
+        lines += '<li class="' + (isErr ? "err" : "") + '">' + esc(isErr ? d.replace("ERROR: ", "") : d) + '</li>';
+      }
+      rows += '<div class="test">' +
+        '<div><h4>' + esc(info.title) + '</h4><p class="what">' + esc(info.what) + '</p></div>' +
+        '<ul class="measured">' + lines + '</ul>' +
+        '<span class="badge ' + (pass ? "pass" : "fail") + '">' + (pass ? "Pass" : "Fail") + '</span>' +
+        '</div>';
+    }
+    rows += '</div>';
+  }
+
+  main.innerHTML =
+    '<section class="verdict">' +
+      '<div><h2 class="' + v.cls + '">' + esc(v.head) + '</h2><p>' + esc(v.body) + '</p></div>' +
+      '<div class="memmap"><figure><div class="grid" aria-hidden="true">' + cells + '</div>' +
+      '<figcaption>' + esc(caption) + '</figcaption></figure></div>' +
+    '</section>' +
+    '<section>' + rows + '</section>';
+
+  out.innerHTML = '<details><summary>Show the program\'s full output</summary><pre>' + esc(run.output) + '</pre></details>';
+
+  footer.innerHTML = (results.github ? '<a href="' + esc(results.github) + '">Source code on GitHub</a>. ' : '') +
+    'Fault injection switches on deliberate errors to prove each check catches them.';
+}
+
+
+// ---------- Keeping the page up to date ----------
+async function loadResults() {
+  const r = await fetch("/api/results", { cache: "no-store" });
+  if (r.status === 404) { results = null; return; }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  results = await r.json();
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    status = await r.json();
+  } catch (e) {
+    status = null;
+  }
+
+  // New results arrived (or first load): fetch and redraw them
+  const runAt = status ? status.lastRunAt : null;
+  if (runAt !== shownRunAt) {
+    try {
+      await loadResults();
+      shownRunAt = runAt;
+      renderResults();
+    } catch (e) {}
+  }
+  renderStatus();
+
+  // Check often while a run is happening, less often otherwise
+  clearTimeout(pollTimer);
+  const busy = status && status.state !== "idle";
+  pollTimer = setTimeout(refresh, busy ? 4000 : 20000);
+}
+
+refresh();
+</script>
+</body>
+</html>
