@@ -1,8 +1,8 @@
 <div align="center">
 
-# GPU Diagnostics
+# GPU Diagnostics Test Suite
 
-**A live hardware integrity monitor for a C++/CUDA GPU diagnostic tool.**
+**A live hardware integrity monitor for a C++/CUDA GPU diagnostics test suite.**
 
 ![C++](https://img.shields.io/badge/engine-C%2B%2B%20%2F%20CUDA-00e58a?style=flat-square&labelColor=0d1417)
 ![NVML](https://img.shields.io/badge/health_checks-NVML-00e58a?style=flat-square&labelColor=0d1417)
@@ -12,7 +12,7 @@
 
 <br>
 
-<img src="docs/screenshot-dark.png" alt="GPU Diagnostics dashboard showing a normal run: 4 of 4 checks passed, a green memory map, and passing temperature, fan, memory and compute checks" width="820">
+<img src="docs/screenshot-dark.png" alt="GPU Diagnostics Test Suite dashboard showing a normal run: 4 of 4 checks passed, a green memory map, and passing temperature, fan, memory and compute checks" width="820">
 
 </div>
 
@@ -35,7 +35,7 @@ claims to catch. This page shows the results, live, and can ask Colab to run it 
 | **Fault injection** | Deliberately corrupts the run above, so you can see that every check actually fails when it should. |
 
 <div align="center">
-<img src="docs/screenshot-fault.png" alt="GPU Diagnostics dashboard showing a fault-injection run: all 4 injected faults caught, a red cell in the memory map, and red Fail badges on every check" width="820">
+<img src="docs/screenshot-fault.png" alt="GPU Diagnostics Test Suite dashboard showing a fault-injection run: all 4 injected faults caught, a red cell in the memory map, and red Fail badges on every check" width="820">
 <br><sub>Fault injection on — every check correctly fails, and the corrupted cell lights up red in the memory map.</sub>
 </div>
 
@@ -141,6 +141,6 @@ opens a port, needs a tunnel, or exposes a public address.
 
 <div align="center">
 <br>
-<img src="docs/screenshot-light.png" alt="GPU Diagnostics dashboard in light mode" width="820">
+<img src="docs/screenshot-light.png" alt="GPU Diagnostics Test Suite dashboard in light mode" width="820">
 <br><sub>Theme follows the system's light/dark preference automatically.</sub>
 </div>
