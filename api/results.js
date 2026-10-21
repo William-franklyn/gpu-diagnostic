@@ -21,12 +21,18 @@ export default async function handler(req, res) {
       if (!results || !results.runs || !results.runs.healthy || !results.runs.fault) {
         return send(res, 400, { error: "Results must include a healthy run and a fault run" });
       }
+      // Stamp the results with the exact time and a run number,
+      // so every run is easy to tell apart even if the results are identical
+      const status = await load("status", EMPTY_STATUS);
+      const now = new Date().toISOString();
+      status.runCount = (status.runCount || 0) + 1;
+      results.receivedAt = now;
+      results.runNumber = status.runCount;
       await save("results", results);
 
-      const status = await load("status", EMPTY_STATUS);
       status.state = "idle";
-      status.lastRunAt = new Date().toISOString();
-      status.lastSeen = status.lastRunAt;
+      status.lastRunAt = now;
+      status.lastSeen = now;
       await save("status", status);
 
       return send(res, 200, { ok: true });
